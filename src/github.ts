@@ -51,6 +51,20 @@ function usageUrl(cfg: ApiConfig, year: number, month: number, day: number): str
   );
 }
 
+/** Login du propriétaire du token (GET /user). */
+export async function fetchAuthenticatedLogin(token: string): Promise<string | undefined> {
+  try {
+    const { status, body } = await httpGetJson("https://api.github.com/user", token);
+    if (status === 200) {
+      const parsed = JSON.parse(body) as { login?: string };
+      return parsed.login || undefined;
+    }
+  } catch {
+    /* réseau indisponible : on retombera sur les autres sources */
+  }
+  return undefined;
+}
+
 /** Date locale YYYY-MM-DD. */
 export function toDateKey(d: Date): string {
   const y = d.getFullYear();

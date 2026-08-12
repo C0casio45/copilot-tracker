@@ -19,13 +19,13 @@ Les jours passés sont mis en cache (ils sont immuables) ; seul le jour courant 
 ## Installation
 
 ```powershell
-code --install-extension copilot-aic-tracker-0.1.0.vsix
+code --install-extension copilot-aic-tracker-0.1.1.vsix
 ```
 
 ## Configuration
 
 1. **Réglages** (`Ctrl+,` → « AIC Tracker ») :
-   - `aicTracker.username` : votre login GitHub (obligatoire)
+   - `aicTracker.username` : optionnel — le login est détecté automatiquement (propriétaire du PAT via `GET /user`, sinon session GitHub de VS Code). Ne le renseigner que pour suivre un autre compte.
    - `aicTracker.organization` : le slug de l'organisation si votre licence est Copilot Business (l'extension interrogera alors l'endpoint de l'org avec `?user=<username>`)
    - `aicTracker.historyDays` (14 par défaut), `aicTracker.refreshIntervalMinutes` (15 par défaut)
 2. **Token** : palette de commandes → `AIC Tracker: Définir le token GitHub (PAT)`.

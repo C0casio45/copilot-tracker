@@ -1,11 +1,12 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { ApiConfig, fetchDayUsage, toDateKey } from "./github";
+import { ApiConfig, fetchAuthenticatedLogin, fetchDayUsage, toDateKey } from "./github";
 import { scanLocalActivity } from "./localScanner";
 import { DashboardState, DayUsage, LocalDayActivity, ModelRankEntry } from "./types";
 
 const SECRET_TOKEN_KEY = "aicTracker.githubToken";
 const CACHE_PREFIX = "aicTracker.day.";
+const LOGIN_CACHE_KEY = "aicTracker.detectedLogin";
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -80,6 +81,37 @@ export class UsageStore {
   }
 
   /**
+   * Login GitHub à suivre. Priorité : réglage explicite, puis propriétaire du
+   * PAT (GET /user), puis session GitHub de VS Code (celle utilisée par
+   * Copilot), puis dernière détection réussie (cache).
+   */
+  private async resolveUsername(token: string | undefined): Promise<string> {
+    const configured = this.config().username;
+    if (configured) return configured;
+
+    if (token) {
+      const login = await fetchAuthenticatedLogin(token);
+      if (login) {
+        await this.context.globalState.update(LOGIN_CACHE_KEY, login);
+        return login;
+      }
+    }
+
+    try {
+      const session = await vscode.authentication.getSession("github", [], { silent: true });
+      const login = session?.account.label;
+      if (login) {
+        await this.context.globalState.update(LOGIN_CACHE_KEY, login);
+        return login;
+      }
+    } catch {
+      /* pas de session GitHub active */
+    }
+
+    return this.context.globalState.get<string>(LOGIN_CACHE_KEY) ?? "";
+  }
+
+  /**
    * Consommation AIC des N derniers jours. Les jours passés sont immuables :
    * une fois récupérés sans erreur, ils sont servis depuis le cache
    * (globalState). Le jour courant est toujours re-demandé.
@@ -115,8 +147,9 @@ export class UsageStore {
   }
 
   async buildState(): Promise<DashboardState> {
-    const { username, organization, historyDays } = this.config();
+    const { organization, historyDays } = this.config();
     const token = await this.getToken();
+    const username = await this.resolveUsername(token);
     const errors: string[] = [];
 
     const dayKeys = lastNDays(historyDays);
@@ -125,7 +158,9 @@ export class UsageStore {
     // 1. AIC via l'API GitHub (si configurée)
     let usages: DayUsage[] = dayKeys.map((date) => ({ date, items: [], fetchedAt: 0 }));
     if (!username) {
-      errors.push("Renseignez aicTracker.username dans les réglages.");
+      errors.push(
+        "Login GitHub indétectable (pas de token ni de session GitHub) — renseignez aicTracker.username."
+      );
     } else if (!token) {
       errors.push("Aucun token GitHub : commande « AIC Tracker: Définir le token GitHub (PAT) ».");
     } else {
