@@ -1,0 +1,84 @@
+{
+  "name": "copilot-aic-tracker",
+  "displayName": "Copilot AIC Tracker",
+  "description": "Suivi journalier de la consommation GitHub Copilot : AI Credits (AIC) par jour, discussions, agents utilisés et classement par modèle LLM.",
+  "version": "0.1.0",
+  "publisher": "scriptor-artis",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aicTracker.openDashboard",
+        "title": "Ouvrir le tableau de bord",
+        "category": "AIC Tracker",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "aicTracker.refresh",
+        "title": "Rafraîchir les données",
+        "category": "AIC Tracker",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aicTracker.setToken",
+        "title": "Définir le token GitHub (PAT)",
+        "category": "AIC Tracker"
+      },
+      {
+        "command": "aicTracker.clearToken",
+        "title": "Supprimer le token GitHub",
+        "category": "AIC Tracker"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot AIC Tracker",
+      "properties": {
+        "aicTracker.username": {
+          "type": "string",
+          "default": "",
+          "description": "Login GitHub dont on suit la consommation (obligatoire)."
+        },
+        "aicTracker.organization": {
+          "type": "string",
+          "default": "",
+          "description": "Organisation GitHub (licence Copilot Business). Si renseignée, l'extension interroge l'endpoint de l'organisation avec ?user=<username>. Sinon, l'endpoint utilisateur est utilisé."
+        },
+        "aicTracker.historyDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Nombre de jours d'historique affichés dans le tableau de bord."
+        },
+        "aicTracker.refreshIntervalMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 5,
+          "description": "Intervalle de rafraîchissement automatique (minutes)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}
