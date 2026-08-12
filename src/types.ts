@@ -44,6 +44,20 @@ export interface ModelRankEntry {
   quantity: number;
 }
 
+/** Photo du quota Copilot (endpoint interne), pour l'affichage. */
+export interface QuotaInfo {
+  plan?: string;
+  snapshotKey: string;
+  entitlement: number;
+  remaining: number;
+  percentRemaining?: number;
+  used: number;
+  unlimited: boolean;
+  overageCount: number;
+  overagePermitted: boolean;
+  resetDate?: string;
+}
+
 /** État complet envoyé au webview. */
 export interface DashboardState {
   generatedAt: number;
@@ -51,6 +65,15 @@ export interface DashboardState {
   organization: string;
   tokenConfigured: boolean;
   historyDays: number;
+  /**
+   * billing : API de facturation GitHub (AIC exacts, détail par modèle).
+   * quota   : endpoint interne Copilot (compteur global échantillonné) —
+   *           le classement LLM passe alors sur les requêtes locales.
+   */
+  mode: "billing" | "quota";
+  /** Unité des valeurs du classement LLM ("AIC" ou "requêtes"). */
+  rankingUnit: string;
+  quota?: QuotaInfo;
   today: {
     date: string;
     aicGross: number;

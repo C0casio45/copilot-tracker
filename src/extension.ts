@@ -22,11 +22,18 @@ export function activate(context: vscode.ExtensionContext): void {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       })}`;
+      const quotaLine = state.quota
+        ? `- Quota période : **${state.quota.used.toFixed(2)} / ${state.quota.entitlement.toFixed(2)}**` +
+          (state.quota.resetDate ? ` (reset le ${state.quota.resetDate})` : "") +
+          "\n"
+        : "";
       statusBar.tooltip = new vscode.MarkdownString(
         `**Copilot AIC — aujourd'hui (${state.today.date})**\n\n` +
           `- AIC consommés : **${state.today.aicGross.toFixed(2)}**\n` +
           `- Discussions : **${state.today.sessions}** (${state.today.requests} requêtes)\n` +
-          `- Agents : ${state.today.agentsUsed.join(", ") || "—"}\n\n` +
+          `- Agents : ${state.today.agentsUsed.join(", ") || "—"}\n` +
+          quotaLine +
+          "\n" +
           (state.errors.length ? `⚠ ${state.errors[0]}\n\n` : "") +
           `_Cliquer pour ouvrir le tableau de bord._`
       );
@@ -69,6 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       if (token) {
         await store.setToken(token.trim());
+        await store.clearBillingBlocked();
         vscode.window.showInformationMessage("AIC Tracker : token enregistré.");
         await refresh();
       }
@@ -81,7 +89,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("aicTracker")) {
-        void refresh();
+        // Une config qui change peut débloquer l'API de facturation : on retente.
+        void store.clearBillingBlocked().then(() => refresh());
       }
     }),
 

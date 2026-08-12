@@ -1,8 +1,9 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { fetchQuota, QuotaReading } from "./copilotQuota";
 import { ApiConfig, fetchAuthenticatedLogin, fetchDayUsage, toDateKey } from "./github";
 import { scanLocalActivity } from "./localScanner";
-import { DashboardState, DayUsage, LocalDayActivity, ModelRankEntry } from "./types";
+import { DashboardState, DayUsage, LocalDayActivity, ModelRankEntry, QuotaInfo } from "./types";
 
 const SECRET_TOKEN_KEY = "aicTracker.githubToken";
 const CACHE_PREFIX = "aicTracker.day.";
@@ -15,6 +16,18 @@ const LOGIN_CACHE_KEY = "aicTracker.detectedLogin";
 const GITHUB_SCOPES = ["user"];
 
 export type TokenSource = "pat" | "session" | "none";
+
+const SAMPLES_KEY = "aicTracker.quotaSamples";
+const BILLING_BLOCKED_KEY = "aicTracker.billingBlocked";
+
+/** Un relevé du compteur de quota Copilot. */
+interface QuotaSample {
+  t: number;
+  /** Consommation cumulée depuis le début de la période de facturation. */
+  used: number;
+  entitlement: number;
+  resetDate?: string;
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -47,6 +60,23 @@ function rankModels(usages: DayUsage[]): ModelRankEntry[] {
   return [...byModel.values()]
     .map((e) => ({ ...e, aic: round2(e.aic) }))
     .sort((a, b) => b.aic - a.aic);
+}
+
+/** Classement des modèles vus localement (nombre de requêtes). */
+function rankLocalModels(days: LocalDayActivity[]): ModelRankEntry[] {
+  const byModel = new Map<string, ModelRankEntry>();
+  for (const day of days) {
+    for (const [model, count] of Object.entries(day.models)) {
+      let entry = byModel.get(model);
+      if (!entry) {
+        entry = { model, aic: 0, quantity: 0 };
+        byModel.set(model, entry);
+      }
+      entry.aic += count;
+      entry.quantity += count;
+    }
+  }
+  return [...byModel.values()].sort((a, b) => b.aic - a.aic);
 }
 
 function sumAmounts(day: DayUsage): { gross: number; net: number } {
@@ -172,6 +202,57 @@ export class UsageStore {
     return results;
   }
 
+  async clearBillingBlocked(): Promise<void> {
+    await this.context.globalState.update(BILLING_BLOCKED_KEY, undefined);
+  }
+
+  private quotaSamples(): QuotaSample[] {
+    return this.context.globalState.get<QuotaSample[]>(SAMPLES_KEY) ?? [];
+  }
+
+  /** Enregistre un relevé du compteur (dédoublonné si rien n'a bougé dans la journée). */
+  private async recordQuotaSample(r: QuotaReading): Promise<void> {
+    const samples = this.quotaSamples();
+    const last = samples[samples.length - 1];
+    const sample: QuotaSample = {
+      t: r.fetchedAt,
+      used: r.used,
+      entitlement: r.entitlement,
+      resetDate: r.resetDate,
+    };
+    if (
+      last &&
+      last.used === sample.used &&
+      toDateKey(new Date(last.t)) === toDateKey(new Date(sample.t))
+    ) {
+      last.t = sample.t;
+    } else {
+      samples.push(sample);
+    }
+    while (samples.length > 2000) samples.shift();
+    await this.context.globalState.update(SAMPLES_KEY, samples);
+  }
+
+  /**
+   * Consommation par jour reconstruite par différence entre relevés
+   * successifs du compteur cumulatif. Un delta négatif signifie un reset de
+   * période de facturation : on repart du compteur courant.
+   */
+  private dailyFromSamples(): Map<string, number> {
+    const result = new Map<string, number>();
+    let prev: QuotaSample | undefined;
+    for (const s of this.quotaSamples()) {
+      const day = toDateKey(new Date(s.t));
+      let delta = 0;
+      if (prev) {
+        delta = s.used >= prev.used ? s.used - prev.used : s.used;
+      }
+      result.set(day, round2((result.get(day) ?? 0) + delta));
+      prev = s;
+    }
+    return result;
+  }
+
   /** Dossier "User" de l'instance VS Code courante (parent de globalStorage). */
   private userDir(): string {
     // globalStorageUri = <userData>/User/globalStorage/<publisher.name>
@@ -187,26 +268,57 @@ export class UsageStore {
     const dayKeys = lastNDays(historyDays);
     const todayKey = toDateKey(new Date());
 
-    // 1. AIC via l'API GitHub (si configurée)
+    // 1. Source AIC : API de facturation si accessible, sinon quota interne
+    // Copilot (compteur cumulatif échantillonné à chaque rafraîchissement).
+    let mode: DashboardState["mode"] = "quota";
     let usages: DayUsage[] = dayKeys.map((date) => ({ date, items: [], fetchedAt: 0 }));
-    if (!username) {
-      errors.push(
-        "Login GitHub indétectable (pas de token ni de session GitHub) — renseignez aicTracker.username."
-      );
-    } else if (!token) {
+    let quota: QuotaInfo | undefined;
+
+    if (!token) {
       errors.push(
         "Aucune authentification GitHub : lancez « AIC Tracker: Se connecter à GitHub » " +
           "(réutilise votre compte GitHub de VS Code, aucun PAT nécessaire)."
       );
     } else {
-      usages = await this.fetchAicHistory({ token, username, organization }, dayKeys, todayKey);
-      const failed = usages.filter((u) => u.error);
-      if (failed.length === usages.length && usages.length > 0) {
-        errors.push(`API AIC inaccessible : ${failed[0].error}`);
-      } else {
-        for (const f of failed) {
-          errors.push(`${f.date} : ${f.error}`);
+      const billingBlocked = this.context.globalState.get<boolean>(BILLING_BLOCKED_KEY) ?? false;
+      if (username && !billingBlocked) {
+        // Sonde : un seul appel sur le jour courant avant de charger l'historique.
+        const probe = await fetchDayUsage({ token, username, organization }, todayKey);
+        if (!probe.error) {
+          mode = "billing";
+          usages = await this.fetchAicHistory({ token, username, organization }, dayKeys, todayKey);
+          for (const f of usages.filter((u) => u.error)) {
+            errors.push(`${f.date} : ${f.error}`);
+          }
+        } else if (/HTTP (403|404)/.test(probe.error)) {
+          // Droits insuffisants (licence gérée par l'org) : inutile de réessayer
+          // à chaque rafraîchissement, on mémorise le repli en mode quota.
+          await this.context.globalState.update(BILLING_BLOCKED_KEY, true);
+          errors.push(
+            `API de facturation inaccessible (${probe.error}) — bascule définitive en mode quota Copilot.`
+          );
+        } else {
+          errors.push(`API AIC : ${probe.error} — mode quota utilisé pour ce cycle.`);
         }
+      }
+
+      const reading = await fetchQuota(token);
+      if ("error" in reading) {
+        if (mode === "quota") errors.push(reading.error);
+      } else {
+        quota = {
+          plan: reading.plan,
+          snapshotKey: reading.snapshotKey,
+          entitlement: reading.entitlement,
+          remaining: reading.remaining,
+          percentRemaining: reading.percentRemaining,
+          used: reading.used,
+          unlimited: reading.unlimited,
+          overageCount: reading.overageCount,
+          overagePermitted: reading.overagePermitted,
+          resetDate: reading.resetDate,
+        };
+        await this.recordQuotaSample(reading);
       }
     }
 
@@ -233,7 +345,25 @@ export class UsageStore {
       fetchedAt: 0,
     };
     const todayLocal = localDays.get(todayKey) ?? emptyLocal(todayKey);
-    const todayAmounts = sumAmounts(todayUsage);
+    const localHistory = dayKeys.map((key) => localDays.get(key) ?? emptyLocal(key));
+
+    // Séries AIC et classement LLM selon la source disponible.
+    let dailyAic: DashboardState["dailyAic"];
+    let todayAmounts: { gross: number; net: number };
+    let modelRankingToday: ModelRankEntry[];
+    let modelRankingPeriod: ModelRankEntry[];
+    if (mode === "billing") {
+      dailyAic = usages.map((u) => ({ date: u.date, ...sumAmounts(u), error: u.error }));
+      todayAmounts = sumAmounts(todayUsage);
+      modelRankingToday = rankModels([todayUsage]);
+      modelRankingPeriod = rankModels(usages);
+    } else {
+      const byDay = this.dailyFromSamples();
+      dailyAic = dayKeys.map((date) => ({ date, gross: byDay.get(date) ?? 0, net: 0 }));
+      todayAmounts = { gross: byDay.get(todayKey) ?? 0, net: 0 };
+      modelRankingToday = rankLocalModels([todayLocal]);
+      modelRankingPeriod = rankLocalModels(localHistory);
+    }
 
     const agentTotalsPeriod: Record<string, number> = {};
     for (const key of dayKeys) {
@@ -250,6 +380,9 @@ export class UsageStore {
       organization,
       tokenConfigured: !!token,
       historyDays,
+      mode,
+      rankingUnit: mode === "billing" ? "AIC" : "requêtes",
+      quota,
       today: {
         date: todayKey,
         aicGross: todayAmounts.gross,
@@ -258,10 +391,10 @@ export class UsageStore {
         requests: todayLocal.requests,
         agentsUsed: Object.keys(todayLocal.agents).sort(),
       },
-      modelRankingToday: rankModels([todayUsage]),
-      modelRankingPeriod: rankModels(usages),
-      dailyAic: usages.map((u) => ({ date: u.date, ...sumAmounts(u), error: u.error })),
-      dailyLocal: dayKeys.map((key) => localDays.get(key) ?? emptyLocal(key)),
+      modelRankingToday,
+      modelRankingPeriod,
+      dailyAic,
+      dailyLocal: localHistory,
       agentTotalsPeriod,
       errors,
     };

@@ -197,14 +197,14 @@ function getHtml(): string {
   const fmtAic = (n) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const shortDay = (iso) => iso.slice(8) + '/' + iso.slice(5, 7);
 
-  function renderRank(el, entries) {
+  function renderRank(el, entries, fmt) {
     if (!entries.length) { el.innerHTML = '<div class="empty">Aucune consommation.</div>'; return; }
     const max = Math.max(...entries.map(e => e.aic), 0.0001);
     el.innerHTML = entries.map((e, i) =>
       '<div class="hbar-row">' +
         '<div class="hbar-name" title="' + esc(e.model) + '"><span class="rank">' + (i + 1) + '.</span>' + esc(e.model) + '</div>' +
         '<div class="hbar-track"><div class="hbar-fill" style="width:' + Math.max(1, (e.aic / max) * 100) + '%"></div></div>' +
-        '<div class="hbar-val">' + fmtAic(e.aic) + '</div>' +
+        '<div class="hbar-val">' + fmt(e.aic) + '</div>' +
       '</div>').join('');
   }
 
@@ -221,24 +221,43 @@ function getHtml(): string {
   }
 
   function render(state) {
+    const isBilling = state.mode === 'billing';
     const scope = state.organization
       ? 'org ' + state.organization + ' / ' + state.username
       : state.username || '(utilisateur non configuré)';
     document.getElementById('meta').textContent =
-      scope + ' — mis à jour le ' + new Date(state.generatedAt).toLocaleString('fr-FR');
+      scope + ' — mode ' + (isBilling ? 'facturation' : 'quota Copilot') +
+      ' — mis à jour le ' + new Date(state.generatedAt).toLocaleString('fr-FR');
 
     document.getElementById('errors').innerHTML =
       state.errors.map(e => '<div class="error">⚠ ' + esc(e) + '</div>').join('');
 
     const t = state.today;
-    document.getElementById('tiles').innerHTML =
-      tile('AIC aujourd\\u2019hui', fmtAic(t.aicGross), 'facturé hors crédits : ' + fmtAic(t.aicNet)) +
+    let tiles =
+      tile('AIC aujourd\\u2019hui', fmtAic(t.aicGross),
+        isBilling ? 'facturé hors crédits : ' + fmtAic(t.aicNet) : 'estimé via le quota Copilot') +
       tile('Discussions aujourd\\u2019hui', t.sessions, t.requests + ' requête(s)') +
       tile('Agents utilisés aujourd\\u2019hui', t.agentsUsed.length, esc(t.agentsUsed.join(', ') || '—'));
+    if (state.quota) {
+      const q = state.quota;
+      const pctUsed = q.entitlement > 0 ? Math.round((q.used / q.entitlement) * 100) : 0;
+      tiles = tile(
+        'Quota consommé' + (q.plan ? ' (' + esc(q.plan) + ')' : ''),
+        q.unlimited ? '∞' : pctUsed + ' %',
+        fmtAic(q.used) + ' / ' + fmtAic(q.entitlement) +
+          (q.overageCount ? ' — dépassement : ' + fmtAic(q.overageCount) : '') +
+          (q.resetDate ? ' — reset le ' + esc(q.resetDate) : '')
+      ) + tiles;
+    }
+    document.getElementById('tiles').innerHTML = tiles;
 
+    const fmtRank = isBilling ? fmtAic : ((v) => v.toLocaleString('fr-FR'));
+    document.getElementById('rankTitle').textContent = isBilling
+      ? 'Classement LLM par AIC consommés'
+      : 'Classement LLM par requêtes (activité locale, l\\u2019API ne détaille pas par modèle)';
     document.getElementById('rankPeriodLabel').textContent = state.historyDays + ' derniers jours';
-    renderRank(document.getElementById('rankToday'), state.modelRankingToday);
-    renderRank(document.getElementById('rankPeriod'), state.modelRankingPeriod);
+    renderRank(document.getElementById('rankToday'), state.modelRankingToday, fmtRank);
+    renderRank(document.getElementById('rankPeriod'), state.modelRankingPeriod, fmtRank);
 
     renderCols(document.getElementById('aicChart'),
       state.dailyAic.map(d => ({ date: d.date, value: d.gross, error: d.error })),

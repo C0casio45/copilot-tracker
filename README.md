@@ -7,19 +7,24 @@ Extension VS Code de suivi journalier de la consommation GitHub Copilot :
 - **Nombre de discussions par jour** et **agents utilisés** (reconstruits depuis les sessions de chat Copilot stockées localement par VS Code — aucune API supplémentaire)
 - Indicateur d'AIC du jour dans la barre de statut
 
-## Sources de données
+## Sources de données — deux modes
 
-| Métrique | Source |
-|---|---|
-| AIC / jour, AIC / modèle | API GitHub `GET /users/{username}/settings/billing/ai_credit/usage` (ou l'endpoint organisation avec `?user=` pour Copilot Business) |
-| Discussions / jour, agents utilisés | Fichiers locaux `User/workspaceStorage/*/chatSessions/*.json` de VS Code |
+L'extension sonde d'abord l'API de facturation ; si elle répond 403/404 (cas typique d'une licence **Copilot Business** gérée par l'organisation), elle bascule définitivement en **mode quota** et ne réessaie qu'après un changement de configuration ou de token.
 
-Les jours passés sont mis en cache (ils sont immuables) ; seul le jour courant est re-interrogé, toutes les 15 minutes par défaut.
+| Mode | Source | Ce qu'on obtient |
+|---|---|---|
+| **billing** | API GitHub `GET /users/{username}/settings/billing/ai_credit/usage` (ou endpoint org avec `?user=`) | AIC exacts par jour **et par modèle** |
+| **quota** (repli) | Endpoint interne `GET api.github.com/copilot_internal/user` — celui qu'utilise l'extension Copilot pour afficher votre quota ; accessible avec la simple session GitHub | Compteur cumulatif de la période, échantillonné à chaque rafraîchissement → AIC par jour reconstruits par différence ; le classement LLM passe sur le **nombre de requêtes par modèle** (compté localement) |
+| (toujours) | Fichiers locaux `User/workspaceStorage/*/chatSessions/*.json` | Discussions / jour, agents utilisés, requêtes par modèle |
+
+Limites du mode quota : la granularité journalière dépend de la fréquence d'échantillonnage (VS Code doit être ouvert pour relever le compteur ; la consommation faite pendant que VS Code est fermé est attribuée au jour du relevé suivant), et l'AIC par modèle n'est pas disponible (l'endpoint ne le détaille pas).
+
+En mode billing, les jours passés sont mis en cache (ils sont immuables) ; seul le jour courant est re-interrogé, toutes les 15 minutes par défaut.
 
 ## Installation
 
 ```powershell
-code --install-extension copilot-aic-tracker-0.1.2.vsix
+code --install-extension copilot-aic-tracker-0.1.3.vsix
 ```
 
 ## Configuration
@@ -39,8 +44,8 @@ code --install-extension copilot-aic-tracker-0.1.2.vsix
 
 ## Limites connues
 
-- Si la licence Business ne vous donne pas accès à l'endpoint AIC de l'org, l'erreur HTTP est affichée dans le tableau de bord ; les métriques locales (discussions, agents) fonctionnent quand même.
 - Le comptage local ne voit que l'activité de **cette machine et de cette installation de VS Code** (le dossier `User` de l'instance courante, tous workspaces confondus).
+- `copilot_internal/user` est un endpoint non documenté : GitHub peut en changer le format sans préavis (l'extension parse défensivement et affiche l'erreur le cas échéant).
 
 ## Développement
 
