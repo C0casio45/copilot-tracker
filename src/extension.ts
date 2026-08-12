@@ -44,6 +44,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand("aicTracker.refresh", () => refresh()),
 
+    vscode.commands.registerCommand("aicTracker.signIn", async () => {
+      const { token, source } = await store.resolveToken({ interactive: true });
+      if (token) {
+        vscode.window.showInformationMessage(
+          source === "session"
+            ? "AIC Tracker : connecté via votre compte GitHub de VS Code."
+            : "AIC Tracker : PAT déjà configuré, il reste prioritaire."
+        );
+        await refresh();
+      } else {
+        vscode.window.showWarningMessage("AIC Tracker : connexion GitHub annulée ou impossible.");
+      }
+    }),
+
     vscode.commands.registerCommand("aicTracker.setToken", async () => {
       const token = await vscode.window.showInputBox({
         prompt:
@@ -69,8 +83,29 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration("aicTracker")) {
         void refresh();
       }
+    }),
+
+    vscode.authentication.onDidChangeSessions((e) => {
+      if (e.provider.id === "github") {
+        void refresh();
+      }
     })
   );
+
+  // Premier lancement sans authentification : proposer la connexion (une fois).
+  void (async () => {
+    const { token } = await store.resolveToken();
+    if (!token && !context.globalState.get<boolean>("aicTracker.signInPrompted")) {
+      await context.globalState.update("aicTracker.signInPrompted", true);
+      const choice = await vscode.window.showInformationMessage(
+        "Copilot AIC Tracker : autoriser l'accès à votre compte GitHub pour lire la consommation AIC ?",
+        "Se connecter"
+      );
+      if (choice === "Se connecter") {
+        await vscode.commands.executeCommand("aicTracker.signIn");
+      }
+    }
+  })();
 
   const timer = setInterval(() => void refresh(), store.refreshIntervalMs);
   context.subscriptions.push({ dispose: () => clearInterval(timer) });

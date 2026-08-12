@@ -19,7 +19,7 @@ Les jours passés sont mis en cache (ils sont immuables) ; seul le jour courant 
 ## Installation
 
 ```powershell
-code --install-extension copilot-aic-tracker-0.1.1.vsix
+code --install-extension copilot-aic-tracker-0.1.2.vsix
 ```
 
 ## Configuration
@@ -28,10 +28,9 @@ code --install-extension copilot-aic-tracker-0.1.1.vsix
    - `aicTracker.username` : optionnel — le login est détecté automatiquement (propriétaire du PAT via `GET /user`, sinon session GitHub de VS Code). Ne le renseigner que pour suivre un autre compte.
    - `aicTracker.organization` : le slug de l'organisation si votre licence est Copilot Business (l'extension interrogera alors l'endpoint de l'org avec `?user=<username>`)
    - `aicTracker.historyDays` (14 par défaut), `aicTracker.refreshIntervalMinutes` (15 par défaut)
-2. **Token** : palette de commandes → `AIC Tracker: Définir le token GitHub (PAT)`.
-   - Endpoint utilisateur : PAT fine-grained avec la permission **Plan : Read-only** sur votre compte.
-   - Endpoint organisation : token avec accès facturation de l'organisation.
-   - Le token est stocké dans le SecretStorage de VS Code (jamais dans les settings).
+2. **Authentification** — deux possibilités :
+   - **Sans PAT (recommandé)** : palette de commandes → `AIC Tracker: Se connecter à GitHub`. L'extension réutilise le compte GitHub auquel VS Code est déjà connecté (celui de Copilot) via l'API `vscode.authentication` — une simple demande d'autorisation, aucun token à créer. Une proposition de connexion s'affiche aussi au premier lancement.
+   - **Avec PAT** : `AIC Tracker: Définir le token GitHub (PAT, optionnel)` — PAT fine-grained avec la permission **Plan : Read-only** (ou accès facturation de l'org). S'il est défini, il est prioritaire sur la session. Stocké dans le SecretStorage, jamais dans les settings.
 
 ## Utilisation
 

@@ -8,6 +8,14 @@ const SECRET_TOKEN_KEY = "aicTracker.githubToken";
 const CACHE_PREFIX = "aicTracker.day.";
 const LOGIN_CACHE_KEY = "aicTracker.detectedLogin";
 
+/**
+ * Scope OAuth classique couvrant la lecture du plan/facturation du compte
+ * (équivalent de la permission « Plan » des tokens fine-grained).
+ */
+const GITHUB_SCOPES = ["user"];
+
+export type TokenSource = "pat" | "session" | "none";
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -56,6 +64,30 @@ export class UsageStore {
 
   async getToken(): Promise<string | undefined> {
     return this.context.secrets.get(SECRET_TOKEN_KEY);
+  }
+
+  /**
+   * Jeton effectif pour l'API : PAT enregistré si présent, sinon la session
+   * GitHub de VS Code (le compte déjà connecté pour Copilot). En mode
+   * interactif, VS Code affiche sa demande d'autorisation standard — aucun
+   * PAT à créer.
+   */
+  async resolveToken(opts?: {
+    interactive?: boolean;
+  }): Promise<{ token?: string; source: TokenSource }> {
+    const pat = await this.getToken();
+    if (pat) return { token: pat, source: "pat" };
+    try {
+      const session = await vscode.authentication.getSession(
+        "github",
+        GITHUB_SCOPES,
+        opts?.interactive ? { createIfNone: true } : { silent: true }
+      );
+      if (session) return { token: session.accessToken, source: "session" };
+    } catch {
+      /* connexion refusée ou provider indisponible */
+    }
+    return { source: "none" };
   }
 
   async setToken(token: string): Promise<void> {
@@ -148,7 +180,7 @@ export class UsageStore {
 
   async buildState(): Promise<DashboardState> {
     const { organization, historyDays } = this.config();
-    const token = await this.getToken();
+    const { token } = await this.resolveToken();
     const username = await this.resolveUsername(token);
     const errors: string[] = [];
 
@@ -162,7 +194,10 @@ export class UsageStore {
         "Login GitHub indétectable (pas de token ni de session GitHub) — renseignez aicTracker.username."
       );
     } else if (!token) {
-      errors.push("Aucun token GitHub : commande « AIC Tracker: Définir le token GitHub (PAT) ».");
+      errors.push(
+        "Aucune authentification GitHub : lancez « AIC Tracker: Se connecter à GitHub » " +
+          "(réutilise votre compte GitHub de VS Code, aucun PAT nécessaire)."
+      );
     } else {
       usages = await this.fetchAicHistory({ token, username, organization }, dayKeys, todayKey);
       const failed = usages.filter((u) => u.error);

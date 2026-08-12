@@ -2,7 +2,7 @@
   "name": "copilot-aic-tracker",
   "displayName": "Copilot AIC Tracker",
   "description": "Suivi journalier de la consommation GitHub Copilot : AI Credits (AIC) par jour, discussions, agents utilisés et classement par modèle LLM.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "scriptor-artis",
   "private": true,
   "license": "UNLICENSED",
@@ -31,8 +31,13 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "aicTracker.signIn",
+        "title": "Se connecter à GitHub",
+        "category": "AIC Tracker"
+      },
+      {
         "command": "aicTracker.setToken",
-        "title": "Définir le token GitHub (PAT)",
+        "title": "Définir le token GitHub (PAT, optionnel)",
         "category": "AIC Tracker"
       },
       {
