@@ -5,6 +5,15 @@ import { UsageStore } from "./store";
 export function activate(context: vscode.ExtensionContext): void {
   const store = new UsageStore(context);
 
+  let diagnosticChannel: vscode.OutputChannel | undefined;
+  const getDiagnosticChannel = (): vscode.OutputChannel => {
+    if (!diagnosticChannel) {
+      diagnosticChannel = vscode.window.createOutputChannel("Copilot AIC Tracker");
+      context.subscriptions.push(diagnosticChannel);
+    }
+    return diagnosticChannel;
+  };
+
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = "aicTracker.openDashboard";
   statusBar.text = "$(copilot) AIC …";
@@ -85,6 +94,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("aicTracker.clearToken", async () => {
       await store.clearToken();
       vscode.window.showInformationMessage("AIC Tracker : token supprimé.");
+    }),
+
+    vscode.commands.registerCommand("aicTracker.diagnose", async () => {
+      await refresh();
+      const channel = getDiagnosticChannel();
+      channel.clear();
+      channel.appendLine(await store.diagnose());
+      channel.show(true);
     }),
 
     vscode.workspace.onDidChangeConfiguration((e) => {

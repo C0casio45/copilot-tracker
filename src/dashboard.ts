@@ -246,7 +246,8 @@ function getHtml(): string {
         q.unlimited ? '∞' : pctUsed + ' %',
         fmtAic(q.used) + ' / ' + fmtAic(q.entitlement) +
           (q.overageCount ? ' — dépassement : ' + fmtAic(q.overageCount) : '') +
-          (q.resetDate ? ' — reset le ' + esc(q.resetDate) : '')
+          (q.resetDate ? ' — reset le ' + esc(q.resetDate) : '') +
+          ' — compteur : ' + esc(q.snapshotKey)
       ) + tiles;
     }
     document.getElementById('tiles').innerHTML = tiles;

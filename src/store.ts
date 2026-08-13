@@ -2,7 +2,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { fetchQuota, QuotaReading } from "./copilotQuota";
 import { ApiConfig, fetchAuthenticatedLogin, fetchDayUsage, toDateKey } from "./github";
-import { scanLocalActivity } from "./localScanner";
+import { scanLocalActivity, ScanStats } from "./localScanner";
 import { DashboardState, DayUsage, LocalDayActivity, ModelRankEntry, QuotaInfo } from "./types";
 
 const SECRET_TOKEN_KEY = "aicTracker.githubToken";
@@ -90,6 +90,11 @@ function sumAmounts(day: DayUsage): { gross: number; net: number } {
 }
 
 export class UsageStore {
+  /** Dernières infos utiles à la commande de diagnostic. */
+  lastScanStats?: ScanStats;
+  lastQuotaRaw?: unknown;
+  lastQuotaError?: string;
+
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   async getToken(): Promise<string | undefined> {
@@ -253,6 +258,47 @@ export class UsageStore {
     return result;
   }
 
+  /** Rapport texte pour la commande de diagnostic. */
+  async diagnose(): Promise<string> {
+    const { username, organization, historyDays } = this.config();
+    const { source } = await this.resolveToken();
+    const lines: string[] = [];
+    lines.push(`Copilot AIC Tracker — diagnostic du ${new Date().toLocaleString("fr-FR")}`);
+    lines.push(
+      `login configuré : ${username || "(auto)"} — org : ${organization || "(aucune)"} — historique : ${historyDays} j`
+    );
+    lines.push(`authentification : ${source}`);
+    lines.push(
+      `API facturation bloquée (403/404 mémorisé) : ${
+        this.context.globalState.get<boolean>(BILLING_BLOCKED_KEY) ?? false
+      }`
+    );
+    lines.push(`dossier User scanné : ${this.userDir()}`);
+    const s = this.lastScanStats;
+    if (s) {
+      lines.push(
+        `scan local : ${s.filesSeen} fichiers vus, ${s.filesInWindow} dans la fenêtre, ` +
+          `${s.sessionsParsed} sessions parsées, ${s.requestsCounted} requêtes comptées`
+      );
+      lines.push(`dossiers contenant des sessions : ${s.scannedDirs.length}`);
+      for (const d of s.scannedDirs.slice(0, 15)) lines.push(`  - ${d}`);
+    } else {
+      lines.push("scan local : pas encore exécuté");
+    }
+    const samples = this.quotaSamples();
+    lines.push(`échantillons quota enregistrés : ${samples.length} (10 derniers ci-dessous)`);
+    for (const smp of samples.slice(-10)) {
+      lines.push(
+        `  ${new Date(smp.t).toLocaleString("fr-FR")} — used=${smp.used} ` +
+          `entitlement=${smp.entitlement} reset=${smp.resetDate ?? "?"}`
+      );
+    }
+    if (this.lastQuotaError) lines.push(`dernière erreur quota : ${this.lastQuotaError}`);
+    lines.push("réponse brute copilot_internal/user :");
+    lines.push(JSON.stringify(this.lastQuotaRaw ?? "(pas encore récupérée)", null, 2));
+    return lines.join("\n");
+  }
+
   /** Dossier "User" de l'instance VS Code courante (parent de globalStorage). */
   private userDir(): string {
     // globalStorageUri = <userData>/User/globalStorage/<publisher.name>
@@ -304,8 +350,11 @@ export class UsageStore {
 
       const reading = await fetchQuota(token);
       if ("error" in reading) {
+        this.lastQuotaError = reading.error;
         if (mode === "quota") errors.push(reading.error);
       } else {
+        this.lastQuotaRaw = reading.raw;
+        this.lastQuotaError = undefined;
         quota = {
           plan: reading.plan,
           snapshotKey: reading.snapshotKey,
@@ -326,7 +375,9 @@ export class UsageStore {
     const sinceMs = new Date(dayKeys[0] + "T00:00:00").getTime();
     let localDays = new Map<string, LocalDayActivity>();
     try {
-      localDays = await scanLocalActivity(this.userDir(), sinceMs);
+      const scan = await scanLocalActivity(this.userDir(), sinceMs);
+      localDays = scan.days;
+      this.lastScanStats = scan.stats;
     } catch (e) {
       errors.push(`Scan local impossible : ${e instanceof Error ? e.message : String(e)}`);
     }

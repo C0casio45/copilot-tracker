@@ -22,6 +22,8 @@ export interface QuotaReading {
   /** Consommation depuis le début de la période de facturation. */
   used: number;
   fetchedAt: number;
+  /** Réponse brute (pour la commande de diagnostic). */
+  raw?: unknown;
 }
 
 interface RawSnapshot {
@@ -114,5 +116,6 @@ export async function fetchQuota(token: string): Promise<QuotaReading | { error:
     resetDate: raw.quota_reset_date,
     used,
     fetchedAt: Date.now(),
+    raw,
   };
 }
